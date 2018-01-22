@@ -2,6 +2,7 @@ package sparkCore
 
 import utli.SparkBase
 import org.apache.hadoop.io.compress.BZip2Codec
+import org.apache.spark.sql.{DataFrameWriter, Dataset}
 /**
   * Created by dushao on 18-1-18.
   * spark的文件压缩算法的使用，以及使用Hadoop支持的压缩算法进行文件处理
