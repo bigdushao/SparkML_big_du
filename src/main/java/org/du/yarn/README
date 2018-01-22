@@ -1,1 +1,4 @@
 使用yarn创建分布式应用程序示例
+    主要分为
+        Yarn客户端
+        ApplicationMaster
