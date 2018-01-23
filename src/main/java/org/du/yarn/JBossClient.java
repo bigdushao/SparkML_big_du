@@ -48,10 +48,12 @@ import org.apache.hadoop.yarn.util.Records;
 
 /**
  * Created by dushao on 18-1-22.
+ *
+ *
  */
 public class JBossClient {
     private static final Logger LOG = Logger.getLogger(JBossClient.class.getName());
-
+    // 定义一些全局变量 大部分全局变量会根据命令行参数进行初始化
     private Configuration conf;
     private YarnClient yarnClient;
     private String appName = "";
@@ -76,6 +78,7 @@ public class JBossClient {
      * @param args command line arguments
      * */
     public static void main(String[] args){
+
     boolean result = false;
     try {
         JBossClient client = new JBossClient();
@@ -108,9 +111,39 @@ public class JBossClient {
      * */
 
     public  JBossClient(Configuration conf) throws Exception{
+        /*确保Yarn的环境对客户端可用。YarnConfiguration是Configuration的子类。创建YarnClient对象时，
+        * 参数是YarnConfiguration对象。成功创建YarnConfiguration对象而不产生异常，要正确配置yarn-site.xml
+        * 和yarn-default.xml这两个文件
+        * 保证两个配置文件，能在classpath中找到它们，确保在classpath中没有重复和冲突的配置文件，会避免因此浪费不必要的时间。
+        * yarn-site.xml一般在Hadoop的标准配置文件目录:～/etc/hadoop。如果一个配置项在yarn-site.xml中没有显示指定，这个配置项
+        * 的默认值将由yarn-default.xml提供，yarn-default.xml在hadoop-yarn-common.jar里，
+        * 这个jar包一般在Hadoop的默认的classpath中*/
         this.conf = conf;
-        yarnClient = YarnClient.createYarnClient();
-        yarnClient.init(conf);
+        /*YarnConfiguration创建成功，通过YarnClient的工厂方法创建YarnClient对象
+        * YarnClient是Yarn提供的一个服务，服务是Yarn的核心架构的一部分，日志聚集服务，节点健康状态的服务，
+        * Shuffle处理器，都是Yarn的服务，服务都由管理自身声明周期的初始，开始和终止的这些方法。
+        * 还有一些获取服务状态，失败时获取原因的方法，还可以向服务注册监听器，在某些特定事发生时，注册的回调函数将得到调用。*/
+
+        /*YarnClient对象初始化时，首先从yarn-site.xml或者yarn-default.xml中的yarn.resource-manager.address属性获取ResourceManager
+        * 的IP地址和端口。接着，从yarn.client.appsubmission.poll-interval属性获取轮询应用程序状态的周期，单位是毫秒，默认值是1000*/
+
+        /*YarnClient对象初始化之后，会在内部创建一个ResourceManager客户端代理。Yarn application的开发者不需要直接跟这个代理打交道，
+        * 调用YarnClient的方法就可以了.
+        * YarnClient对象创建以后，通过Options来添加命令行参数。对每个命令行参数，需要3个参数传给Options.addOption方法。
+        * (1)参数名，
+        * (2)参数是否需要用户指定值
+        * (3)参数的描述，当用户需要命令行帮助或者输入了错误的参数时，输出到终端上*/
+
+        yarnClient = YarnClient.createYarnClient(); // 使用Crate方法实例化YarnClient
+        yarnClient.init(conf); // 初始化yarn的配置，对输入参数进行解析
+
+        /*
+        * YarnClient对象创建以后，通过Options来添加命令行参数。对每个命令行参数，需要3个参数传给Options.addOption方法。
+        * (1)参数名，
+        * (2)参数是否需要用户指定值
+        * (3)参数的描述，当用户需要命令行帮助或者输入了错误的参数时，输出到终端上
+        * 应用程序的名字，优先级，queue，ApplicationMaster和Container所需的内存大小，大多数参数都是Yarn环境所需要的。
+        * */
         opts = new Options();
         opts.addOption("appname", true,
                 "Application Name. Default value - JBoss on YARN");
@@ -134,7 +167,9 @@ public class JBossClient {
         opts.addOption("debug", false, "Dump out debug information");
         opts.addOption("help", false, "Print usage");
     }
-
+    /**
+     * YarnClient的构造函数使用调用的是将YarnConfiguration作为参数的构造方法，
+     * */
     public JBossClient() throws Exception{
         this(new YarnConfiguration());
     }
@@ -148,6 +183,7 @@ public class JBossClient {
     }
 
     /**
+     * 对数输入的参数进行解析，首先实在YarnConfiguration初始化完成之后
      * parse command line options
      * @param args parsed command line options
      * @return whether the init was successful to run the client
@@ -206,17 +242,19 @@ public class JBossClient {
 
     /**
      * main run function for the client
-     *
+     * 方法中包含YarnClient的创建，初始化和运行这些
+     * YarnClient是一个Yarn服务，有管理声明周期的一些方法。
+     * 通过YarnClient的对象可以获取很多集群相关的信息
      * */
 
     public boolean run() throws IOException, YarnException{
 
         LOG.info("Running Client");
         yarnClient.start();
-
+        /*获取集群的信息，获取的集群信息,获取节点个数*/
         YarnClusterMetrics clusterMetrics = yarnClient.getYarnClusterMetrics();
         LOG.info("Got cluster metric info form ASM , numNodeManagers = " + clusterMetrics.getNumNodeManagers());
-
+        /*获取NodeReport对象，查看集群各个节点的状态*/
         List<NodeReport> clusterNodeReports = yarnClient.getNodeReports(NodeState.RUNNING);
         LOG.info("Got Cluster node info form ASM");
         for (NodeReport node : clusterNodeReports) {
@@ -226,7 +264,7 @@ public class JBossClient {
                     + node.getRackName() + ", nodeNumContainers"
                     + node.getNumContainers());
         }
-
+        /*获取集群中的任务队列*/
         QueueInfo queueInfo = yarnClient.getQueueInfo(this.amQueue);
         LOG.info("Queue info" + ", queueName=" + queueInfo.getQueueName()
                 + ", queueCurrentCapacity=" + queueInfo.getCurrentCapacity()
@@ -235,6 +273,7 @@ public class JBossClient {
                 + queueInfo.getApplications().size()
                 + ", queueChildQueueCount=" + queueInfo.getChildQueues().size());
 
+        /*获取集群中的权限信息*/
         List<QueueUserACLInfo> listAclInfo = yarnClient.getQueueAclsInfo();
         for (QueueUserACLInfo aclInfo : listAclInfo) {
             for (QueueACL userAcl : aclInfo.getUserAcls()) {
@@ -244,6 +283,9 @@ public class JBossClient {
             }
         }
 
+        /*YarnClientApplication对象，通过这个对象来设置一些关键对象:GetNewApplicationResponse和ApplicationSubmissionContext
+        * GetNewApplicationResponse可以得到集群的最大可用资源，如最大可用内存和最大可用虚拟CPU核数。
+        * ApplicationSubmissionContext可以得到Yarn集群唯一的applicationID，另外，也是通过这个对象，设置ApplicationMaster的运行参数*/
         YarnClientApplication app = yarnClient.createApplication();
         GetNewApplicationResponse appResponse = app.getNewApplicationResponse();
         int maxMem = appResponse.getMaximumResourceCapability().getMemory();
@@ -255,17 +297,30 @@ public class JBossClient {
             amMemory = maxMem;
         }
 
+        /* ApplicationSubmissionContext可以得到Yarn集群唯一的applicationID，另外，也是通过这个对象，设置ApplicationMaster的运行参数*/
         ApplicationSubmissionContext appContext = app
                 .getApplicationSubmissionContext();
-        ApplicationId appId = appContext.getApplicationId();
-        appContext.setApplicationName(appName);
 
+        // applicationId
+        ApplicationId appId = appContext.getApplicationId();
+        // 设置ApplicationName
+        appContext.setApplicationName(appName);
+        /*设置给ApplicationSubmissionContext的值是ContainerLaunchContext，ApplicationMaster本事就是一个Yarn Container，
+        * 创建一个org.apache.hadoop.yarn.api.records.ContainerLaunchContext对象，启动ApplicationMaster本身的这个Container
+        * ContainerLaunchContext包含了ApplicationMaster运行时所需要的资源，最典型的是包含ApplicationMaster的class的Jar包，
+        * 描述这些资源的是一个Map对象。Map的key和value分别是java.lang.String和org.apache.hadoop.yarn.api.records.LocalResource
+        * key会被用来建立一个Container可见的本地文件系统的软链接*/
         ContainerLaunchContext amContainer = Records
                 .newRecord(ContainerLaunchContext.class);
 
         Map<String, LocalResource> localResources = new HashMap<String, LocalResource>();
 
         LOG.info("Copy App Master jar from local filesystem and add to local environment");
+
+        // 将本地的文件上传到Hdfs文件系统，其他节点的Container能够获取访问该资源，将该资源在进行本地化
+        // 为了便于YARN进行验证，把修改时间和文件大小也写到LocalResources对象。然后把这个对象加入到LocalResource Map中
+        // 再把Map加入ContainerLaunchContext对象。
+
         FileSystem fs = FileSystem.get(conf);
         Path src = new Path(appJar);
         String pathSuffix = appName + File.separator + appId.getId()
@@ -277,11 +332,16 @@ public class JBossClient {
         FileStatus destStatus = fs.getFileStatus(dst);
         LocalResource amJarRsrc = Records.newRecord(LocalResource.class);
 
+        /*ApplicationMaster的Jar包对应的LocalResources对象定义为LocalResourceType.FILE类型，
+        * 这样会被直接拷贝到Container的本地文件系统而不需奥解压*/
         amJarRsrc.setType(LocalResourceType.FILE);
+        // 设置资源的可见性，APPLICATION意思是只有这个应用程序可以访问这个资源
+        // 可见性还可以设置为所有application都可以访问，或者同一用户提交的应用程序都可以访问
         amJarRsrc.setVisibility(LocalResourceVisibility.APPLICATION);
         amJarRsrc.setResource(ConverterUtils.getYarnUrlFromPath(dst));
         amJarRsrc.setTimestamp(destStatus.getModificationTime());
         amJarRsrc.setSize(destStatus.getLen());
+        // 添加运行的Jar文件
         localResources.put(JBossConstants.JBOSS_ON_YARN_APP,
                 amJarRsrc);
 
@@ -301,6 +361,7 @@ public class JBossClient {
             log4jRsrc.setSize(log4jFileStatus.getLen());
             localResources.put("log4j.properties", log4jRsrc);
         }
+
         // 文件本地化
         amContainer.setLocalResources(localResources);
 
@@ -384,6 +445,8 @@ public class JBossClient {
     }
 
     /**
+     * 通过YarnClient每获取一次应用程序的状态信息，这些状态信息封装在一个ApplicationReport对象中。ApplicationReport有一些便利的方法来获取应用
+     * 的信息例如:应用的ID，重要的是应用的状态和终止情况。这些信息都会输出，直到应用成功完成或者被ResourceManager杀掉
      * Monitor the submitted application for completion .kill application if time expires
      * @param appId
      *          application id of application to be monitored
