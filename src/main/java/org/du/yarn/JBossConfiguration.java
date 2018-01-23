@@ -10,6 +10,8 @@ import org.apache.commons.cli.ParseException;
 
 /**
  * Created by dushao on 18-1-22.
+ *
+ * 获取相关YARN环境信息
  */
 public class JBossConfiguration implements JBossConstants{
     private static String jbossHome;
