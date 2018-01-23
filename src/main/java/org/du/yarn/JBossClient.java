@@ -365,6 +365,9 @@ public class JBossClient {
         // 文件本地化
         amContainer.setLocalResources(localResources);
 
+        /*在ApplicationMaster的设置环境中，获取客户端的类路径，客户端的Yarn环境的类路径，并利用这些值构建类路径字符串。
+        * 要设置的环境变量由java.lang.String的映射组成，其中添加了CLASSPATH中的关键字组成的类路径*/
+
         LOG.info("Set the environment for the application master");
         Map<String, String> env = new HashMap<String, String>();
 
@@ -389,9 +392,16 @@ public class JBossClient {
         }
 
         env.put("CLASSPATH", classPathEnv.toString());
-
+        // 设置ApplicationMaster的ClassPath
         amContainer.setEnvironment(env);
 
+        /* 构造启动ApplicationMaster的命令行。大多数命令行参数就是用户指定给client的，使用标准的Java命令
+        * Yarn通过org.apache.hadoop.yarn.api.ApplicationConstants.Environment 提供构造方法
+        * 示例中使用了Environment.JAVA_HOME.$(), 在Windows环境下，自动在环境变量名前后加上'%'符号，
+        * 在命令后面重定向stdout和stderr到log文件。可以指定任意目录和文件，只要Container有写权限。
+        * 实例中使用的是硬编码，更好的办法是YarnConfiguration对象的get('yarn.log.dir')来获取log文件路径*/
+
+        // 构造启动ApplicationMaster启动命令，并把启动命令加入ContainerLaunchContext
         Vector<CharSequence> vargs = new Vector<CharSequence>(30);
 
         LOG.info("Setting up app master command");
@@ -423,24 +433,35 @@ public class JBossClient {
                 + command.toString());
         List<String> commands = new ArrayList<String>();
         commands.add(command.toString());
+        /* ContainerLaunchContext接受java.util.List对象，其中每个元素就是一条shell命令。Yarn 会将这些Shell命令组成一个Shell脚本，用来启动Container
+        * 对于ApplicationMaster，只需要一条命令。所以，Java命令加到list之后。使用list来指定ContainerLaunchContext的启动命令*/
+
+        // 将启动命令加入到ContainerLaunchContext中
         amContainer.setCommands(commands);
 
+        /*指定应用程序的资源需求，Yarn应用程序最重要的一个资源是内存，如何通过标准方式定义内存资源需求，并把它加到ApplicationSubmissionContext中
+        * 另一个重要的设置应用程序的队列和优先级，
+        * Capacity调度器。调度器是可插拔的，可以在yarn-site.xml中设定，以便于管理运行多个并行作业的Yarn集群。*/
         Resource capability = Records.newRecord(Resource.class);
         capability.setMemory(amMemory);
         appContext.setResource(capability);
 
-        appContext.setAMContainerSpec(amContainer);
+        /*设置了ContainerLaunchContext的启动命令后，可以告诉ApplicationSubmissionContext，
+        刚才准备的ContainerLaunchContext是针对ApplicationMaster，ApplicationMaster也是作为一个Container启动的，
+        因为ApplicationMaster的Container只有一个，Yarn有专门有方法设置ContainerLaunchContext*/
+        appContext.setAMContainerSpec(amContainer); // 专门设置ApplicationMaster的container启动
 
+        // 设置优先级
         Priority pri = Records.newRecord(Priority.class);
         pri.setPriority(amPriority);
         appContext.setPriority(pri);
-
+        // 设置队列
         appContext.setQueue(amQueue);
 
         LOG.info("Submitting the application to ASM");
 
         yarnClient.submitApplication(appContext);
-
+        // 通过YarnClient提交应用程序，在客户端代码中，提交应用程序的方法会阻塞，直到ResourceManager返回应用程序的状态为ACCEPTED
         return monitorApplication(appId);
     }
 
