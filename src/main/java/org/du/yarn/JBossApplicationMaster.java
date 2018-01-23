@@ -57,8 +57,18 @@ import org.apache.hadoop.yarn.util.Records;
  * Created by dushao on 18-1-22.
  *
  * Client for JBoss Application Master submission to YARN
+ *
+ * 一个新创建的应用程序首先向ResourceManager注册自己，
+ * 然否以Container的形式从ResourceManager请求资源，
+ * 请求到资源以后跟NodeManager通信
+ * 启动Container
+ * 监控Container的运行
  */
 public class JBossApplicationMaster {
+    /*ApplicationMaster也依次执行构造函数、初始化和运行的流程，在构造函数里，先创建一个YarnConfiguration对象，
+    * 这个对象包含了ApplicationMaster本身的Container对应的Yarn环境设置。
+    * 构造函数里面ApplicationMaster本身的Container对应的Yarn环境设置。构造函数里面还定义了命令行参数，
+    * 构造函数写完后，再添加一个初始化的方法*/
     private static final Logger LOG = Logger.getLogger(JBossApplicationMaster.class.getName());
 
     private Configuration conf;
@@ -159,6 +169,7 @@ public class JBossApplicationMaster {
         }
     }
 
+    /*定义了一个默认的构造函数，进行ApplicationMaster的一些准备工作*/
     public JBossApplicationMaster() throws Exception {
         conf = new YarnConfiguration();
     }
@@ -173,7 +184,7 @@ public class JBossApplicationMaster {
      * @throws IOException
      */
     public boolean init(String[] args) throws ParseException, IOException {
-
+        // 命令行参数
         Options opts = new Options();
         opts.addOption("app_attempt_id", true,
                 "App Attempt ID. Not to be used unless for testing purposes");
@@ -190,6 +201,7 @@ public class JBossApplicationMaster {
         opts.addOption("debug", false, "Dump out debug information");
 
         opts.addOption("help", false, "Print usage");
+
         CommandLine cliParser = new GnuParser().parse(opts, args);
 
         if (args.length == 0) {
@@ -254,8 +266,10 @@ public class JBossApplicationMaster {
                 "container_memory", "1024"));
         numTotalContainers = Integer.parseInt(cliParser.getOptionValue(
                 "num_containers", "1"));
+
         adminUser = cliParser.getOptionValue("admin_user", "yarn");
         adminPassword = cliParser.getOptionValue("admin_password", "yarn");
+
         appJar = cliParser.getOptionValue("jar");
         if (numTotalContainers == 0) {
             throw new IllegalArgumentException(
@@ -282,22 +296,49 @@ public class JBossApplicationMaster {
      *
      * @throws YarnException
      * @throws IOException
+     * 实现一个回调函数处理器监听来自ResourceManager的事件
+     * 通过Yarn api 创建一个对象，封装ApplicationMaster跟ResourceManager通信的客户端
+     * 实现一个回调函数处理器监听来自NodeManager的事件
+     * 通过Yarn API创建一个对象，封装ApplicationMaster跟NodeManager通信的客户端。
+     * 实现一个类用来启动Container
+     *
+     * 初始化的对象有:RMCallbackHandler
+     *              NMCallbackHandler
+     *              RegisterApplicationMasterResponse
+     *
      */
     @SuppressWarnings({ "unchecked" })
     public boolean run() throws YarnException, IOException {
         LOG.info("Starting JBossApplicationMaster");
 
+        /*初始化ResourceManager回调函数处理器，然后用这个处理器创建一个Client对象。
+        这个类是Yarn所提供的用于ApplicationMaster与ResourceManager异步通信的库，
+        启动Container的类会被ResourceManager回调函数处理器调用 */
+
         AMRMClientAsync.CallbackHandler allocListener = new RMCallbackHandler();
+
         resourceManager = AMRMClientAsync.createAMRMClientAsync(1000,
                 allocListener);
-        resourceManager.init(conf);
+
+        resourceManager.init(conf); // 服务首先进行初始化，初始化完成之后进行启动
         resourceManager.start();
 
+        /*yarn service生命周期，先以YarnConfiguration对象为参数调用init方法，然后调用start方法。
+        * NoeManager回调函数处理器的实例化，这个对象用来创建一个Client对象，这个对象用于ApplicationMaster和NodeManager
+        * 之间进行异步通信，对这个对象，再一次重复了Yarn服务的调用模式*/
         containerListener = new NMCallbackHandler();
         nmClientAsync = new NMClientAsyncImpl(containerListener);
-        nmClientAsync.init(conf);
+        nmClientAsync.init(conf); // 服务首先进行初始化，初始化完成之后进行启动
         nmClientAsync.start();
 
+        /*建立好回调函数处理器和异步通信的客户端对象之后，就可以向ResourceManager注册ApplicationMaster了
+        *
+        * 向ResourceManager注册ApplicationMaster时，需要提供一些基本的信息，
+        *   ApplicationMaster的hostname
+        *   PRC端口
+        *   tracking URL(可以有开发者自己定义)Yarn的WEB界面上会对每个应用程序显示这个URL的链接，
+        * 注册成功以后，ApplicationMaster上跟ResourceManager通信的心跳线程就启动了
+        * */
         RegisterApplicationMasterResponse response = resourceManager
                 .registerApplicationMaster(appMasterHostname, appMasterRpcPort,
                         appMasterTrackingUrl);
@@ -319,6 +360,7 @@ public class JBossApplicationMaster {
             ContainerRequest containerAsk = setupContainerAskForRM();
             resourceManager.addContainerRequest(containerAsk);
         }
+
         numRequestedContainers.set(numTotalContainers);
 
         while (!done) {
@@ -374,12 +416,22 @@ public class JBossApplicationMaster {
         resourceManager.stop();
     }
 
+    // ResourceManager的回调函数 定义为外部类也可以。
+    /*
+    * 类中实现方法都是在CallBackHandler中定义的
+    * */
     private class RMCallbackHandler implements AMRMClientAsync.CallbackHandler {
         @SuppressWarnings("unchecked")
+        /**
+         * 一旦ResourceManager给分配了一个Container，就通过一个LaunchContainerRunnable类来启动刚分配的Container。
+         * LaunchContainerRunnable实现了java.lang.Runnable接口，通过LaunchContainerRunnable类创建线程。
+         * */
+
         public void onContainersCompleted(
                 List<ContainerStatus> completedContainers) {
             LOG.info("Got response from RM for container ask, completedCnt="
                     + completedContainers.size());
+
             for (ContainerStatus containerStatus : completedContainers) {
                 LOG.info("Got container status for containerID="
                         + containerStatus.getContainerId() + ", state="
@@ -390,6 +442,7 @@ public class JBossApplicationMaster {
                 assert (containerStatus.getState() == ContainerState.COMPLETE);
 
                 int exitStatus = containerStatus.getExitStatus();
+
                 if (0 != exitStatus) {
                     if (ContainerExitStatus.ABORTED != exitStatus) {
                         numCompletedContainers.incrementAndGet();
@@ -464,6 +517,7 @@ public class JBossApplicationMaster {
         }
     }
 
+    // NodeManager的回调函数
     private class NMCallbackHandler implements NMClientAsync.CallbackHandler {
 
         private ConcurrentMap<ContainerId, Container> containers = new ConcurrentHashMap<ContainerId, Container>();
@@ -528,6 +582,15 @@ public class JBossApplicationMaster {
     /**
      * Thread to connect to the {@link ContainerManagementProtocol} and launch
      * the container that will execute the shell command.
+     *
+     * ApplicationMaster把Container的环境，启动命令和本地资源的设置都加到ContainerLaunchContext对象中，
+     * 然后把这个对象提交给该Container所在的NodeManager这些工作完成以后，NodeManager就启动这个Container
+     *
+     * 创建一个LocalResource的Map，这个步骤和开发客户端时做的一样。
+     * 把两个资源加入到这个LocalResource Map中，JBoss AS的发布包和整个Yarn应用程序的JAR包，
+     * 创建一系列命令，通过这些命令，设置解压后的JBossAS文件的权限，修改JBossAS的配置文件，运行JBoss AS实例
+     * 启动Container
+     *
      */
     private class LaunchContainerRunnable implements Runnable {
 
@@ -557,6 +620,7 @@ public class JBossApplicationMaster {
 
             LOG.info("Setting up container launch container for containerid="
                     + container.getId());
+
             ContainerLaunchContext ctx = Records
                     .newRecord(ContainerLaunchContext.class);
 
