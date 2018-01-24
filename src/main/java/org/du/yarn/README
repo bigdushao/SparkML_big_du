@@ -2,3 +2,51 @@
     主要分为
         Yarn客户端
         ApplicationMaster
+YarnClient 变量opts指向一个org.apache.commons.cli.Options对象，用来保存命令行的参数名和参数值
+    创建了JBossClient对象以后，g用命令行参数对 它进行初始化，然后调用它的run()方法。
+    在构造函数中，第一步是确保Yarn的环境对客户端可用，YarnConfiguration是org.apache.hadoop.conf.Configuration的子类。
+    YarnConfiguration对象成功创建，YarnClient对象的创建就很简单了：通过YarnClient类创建自己的工厂方法。YarnClient对象创建以后，
+YarnConfiguration对象进行初始化。YarnClient之所以需要这些配置信息，是因为YarnClient也是一个Yarn服务。服务的概念是Yarn的核心架构的一部分。
+日志聚集的服务，节点健康状态的服务，Shuffle处理器，都是Yarn的服务，服务都有管理自身生命周期的初始，开始和终止这些方法，还有一些获取服务状态，
+失败时获取原因的方法，还可以向服务注册监听器，在某些特定事件发生时，注册的回调函数将得到调用。
+
+    YarnClient对象初始化时，首先从yarn-site.xml或者yarn-default.xml中的yarn.resource-manager.address属性获取ResourceManager
+    的IP地址和端口，接着从yarn.client.appsubmission.poll-interval属性获取轮询应用程序的周期单位是毫秒，默认值是1000
+
+    YarnClient对象正确创建以后，通过Options来添加命令行参数，对每个命令行参数，需要3个参数传递给Options.addOption方法:(1)参数名，(2)参数是否需要用户指定值，
+    (3)参数的描述，当用户需要命令行帮助或者输入了错误的参数时，输出到终端上
+
+    应用程序创建的命令行参数都是比较基本的，有应用程序名字，优先级，queue，applicationMaster和Container所需的内存大小，
+    大多数参数都是Yarn环境所需要的，少部分参数是JBoss AS所持有的，包括JBoss AS的初始管理员用户ID和密码
+
+run方法讲解
+    YarnClient的创建，初始化和运行这些步骤都放在一个方法里实现，以便于理解，
+    YarnClient是一个Yarn服务，有管理其声明周期的一些方法。在JBossClient的构造函数里，调用YarnClient的init方法。
+在JBossClient的run方法里面，调用YarnClient的start方法
+    YarnClient启动以后，通过它创建org.apache.hadoop.yarn.client.api.YarnClientApplication对象。将通过这个对象设置一些关键对象:
+org.apache.hadoop.yarn.api.protocolrecords.GetNewApplicationResponse和org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext
+从GetNewApplicationResponse可以得到集群的最大可用资源，如最大可用内存和最大可用虚拟CPU核数。从ApplicationSubmissionContext可以得到Yarn集群唯一的applicationID
+另外，也可以通过这个对象，设置ApplicationMaster的运行参数
+    yarnClient.start();
+    YarnClientApplication app = yarnClient.createApplication()
+    GetNewApplicationResponse appResponse = app.getNewApplicationResponse();
+    首先从YarnClientApplication得到的是GetNewApplicationResponse对象，根据它可以获取集群节点的最大可用内存。命令行参数"master_memory"就是用来指定分配多少内存
+给ApplicationMaster。如果用户指定的内存大于集群最大可用内存，就简单地分配集群最大可用内存给ApplicationMaster，而不是用户所请求的数量。
+    通过ApplicationSubmissionContext得到应用程序ID，首先给ApplicationSubmissionContext设置的是应用程序的名字
+
+    设置ApplicationSubmissionContext的值是ContainerLaunchContext。ApplicationMaster本身是一个Yarn Container，不过是一个特殊的Container
+一般称为"Container 0".创建agiel类型为org.apache.hadoop.yarn.api.records.ContainerLaunchContext的对象，以启动ApplicationMaster本身的这个Container
+ContainerLaunchContext一般包括ApplicationMaster运行时所需要的资源，最典型的是包含ApplicationMaster的class的JAR包。描述这些资源的是一个Map对象。
+Map的key和value分别是java.lang.String和org.apache.hadoop.yarn.api.records.LocalResource.key会被用来建立一个Container可见的本地文件系统的软链接。
+
+
+    java -cp $(hadoop classpath):/etc/hadoop/*:/opt/jboss-on-yarn=0.0.1-SNAPSOT.jar
+    org.yarnbook.JBossClient -jar /opt/jboss-on-yarn-0.0.1-SNAPSHOT.jar
+    -admin-user yarn -admin_password yarn -num_containers 2
+通过执行这条命令后，首先客户端跟ResourceManager通信，把JAR包拷贝到某个位置，分配和准备好一定数目的Container，创建每个Container
+的本地目录结构。
+    代表者LocalResource Map的符号链接，还有LaunchContainerRunnable run方法中创建的Container的本地目录的命名约定。
+
+    launch_container.sh脚本中，设置环境变量，创建符号链接，启动JBoss AS.这个脚本是有Yarn生成。当Container成功转换到LOCALIZED
+状态时，NodeManager会执行这个脚本来启动Container。通过Container启动的是JBoss AS实例。
+脚本的使用，说明了YARN可以管理任何编程语言开发的任何应用。
