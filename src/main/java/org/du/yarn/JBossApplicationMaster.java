@@ -591,6 +591,9 @@ public class JBossApplicationMaster {
      * 创建一系列命令，通过这些命令，设置解压后的JBossAS文件的权限，修改JBossAS的配置文件，运行JBoss AS实例
      * 启动Container
      *
+     * LocalResourceMap中有一个资源是tar.gz格式的JBoss AS发布包。Yarn会自动解压这个文件，并创建一个本地符号链接，这个符号链接的名字是
+     * map中的key字符串，例子中JBoss AS发布包的地址是hdfs://yarn1.apps.hdp/9000/apps/jboss/dist/jboss-as-7.1.1.Final.tar.gz
+     * 如果文件在HDFS上，可以通过一个便利方法来创建LocalResource对象，ConvertUtils.getYarnUrlFromPath
      */
     private class LaunchContainerRunnable implements Runnable {
 
@@ -646,13 +649,14 @@ public class JBossApplicationMaster {
                 jbossDist.setTimestamp(fs.getFileStatus(jbossDistPath)
                         .getModificationTime());
                 jbossDist.setSize(fs.getFileStatus(jbossDistPath).getLen());
+                // 把应用的Jar包加到LocalResource Map中,然后构建启动Container命令
                 localResources.put(JBossConstants.JBOSS_SYMLINK, jbossDist);
 
                 LocalResource jbossConf = Records
                         .newRecord(LocalResource.class);
                 jbossConf.setType(LocalResourceType.FILE);
                 jbossConf.setVisibility(LocalResourceVisibility.APPLICATION);
-
+                // 定义解压后JBossAS发布包的位置
                 Path jbossConfPath = new Path(new URI(appJar));
                 jbossConf.setResource(ConverterUtils
                         .getYarnUrlFromPath(jbossConfPath));
@@ -668,13 +672,21 @@ public class JBossApplicationMaster {
                 numFailedContainers.incrementAndGet();
                 return;
             }
-
+            /*每个Container本地文件系统的根目录，由yarn-site.xml文件中的属性yarn-nodemanager.local-dirs定义，
+            * 该属性的值是/var/data/yarn.在这个根目录下，NodeManager会为每个Container创建它自己的子目录。Container终止以后
+            * 这个子目录会被删除，会给开发带来一些困难，Yarn可以通过配置Container的本地目录保留多久再删除，yarn-site.xml文件中
+            * 的属性yarn.nodemanager.delete.debug-delay-sec调试Yarn application时，最好把这个值设大一些，有充分的时间来检
+            * 查Container的本地目录和文件*/
             ctx.setLocalResources(localResources);
-
+            /*启动JBoss AS实例的命令.代码中有一些逻辑是处理JBoss AS特有的参数，完整描述JBoss AS的配置超出了文本的范畴，不过需要
+            * 注意到，要配置端口号和域模式。JBoss AS是一个服务器进程，它会在一些端口上创建Socket。对Yarn来说，在同一个节点运行同
+            * 一个应用程序的多个Container实例是有可能的。这样，如果应用程序在通过一个节点运行多个Container会带来冲突的化，需要做
+            * 一些特殊处理，例如：如果同一NodeManager已经启动了一个Container(JBoss AS实例)，我们需要增加新启动的JBoss AS实例的端口号
+            * JBoss AS提供了快捷的方法*/
             List<String> commands = new ArrayList<String>();
 
             String host = container.getNodeId().getHost();
-
+            // 设置Container的本地目录的权限，
             String containerHome = conf.get("yarn.nodemanager.local-dirs")
                     + File.separator + ContainerLocalizer.USERCACHE
                     + File.separator
@@ -701,7 +713,9 @@ public class JBossApplicationMaster {
             } else {
                 domainControllerValue = domainController;
             }
-
+            // 命令用来配置和启动JBoss AS。把他们加到ContainerLaunchContext以后，
+            // LaunchContainerRunnable类剩下唯一要做的就是启动Container。
+            // 我们把上述代码编到一个JAR包，然后运行一个命令，让客户端解析命令中的参数并传递给ApplicationMaster
             String jbossConfigurationCommand = String
                     .format("%s/bin/java -cp %s %s --home %s --server_group %s --server %s --port_offset %s --admin_user %s --admin_password %s --domain_controller %s --host %s",
                             Environment.JAVA_HOME.$(),
